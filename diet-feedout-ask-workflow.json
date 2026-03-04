@@ -1,0 +1,102 @@
+{
+  "name": "Diet Feedout Ask (Structured Governor)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ask-diet-feedout",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "diet-feedout-ask"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst userMessage = body.message ?? body.user_message ?? body.text ?? '';\nif (!userMessage) {\n  return [{ json: { error: 'Missing message, user_message, or text in request body.', _skipGovernor: true } }];\n}\nreturn [{\n  json: {\n    user_message: userMessage,\n    context: {\n      domain: 'animal_diet_feedouts',\n      scope: 'Employee questions about diet feedouts for animals. Answers must be factual, constrained to feed schedules, rations, and verified data. No persuasion or moralizing.'\n    }\n  }\n}];"
+      },
+      "id": "build-governor-payload",
+      "name": "Build Governor Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5050/govern",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "call-governor",
+      "name": "Call Structured Governor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nif (item._skipGovernor) {\n  return [{ json: { success: false, error: item.error, answer: null, next_actions: [], options: [] } }];\n}\nif (item.error) {\n  return [{ json: { success: false, error: item.error, answer: null, next_actions: [], options: [] } }];\n}\nif (item.code && item.message) {\n  return [{ json: { success: false, error: 'Governor service unavailable: ' + (item.message || item.code), answer: null, next_actions: [], options: [] } }];\n}\nconst resolution = item.resolution || {};\nconst approval = item.approval || {};\nreturn [{\n  json: {\n    success: approval.approved === true,\n    answer: resolution.answer || null,\n    next_actions: resolution.next_actions || [],\n    options: resolution.options || [],\n    approved: approval.approved,\n    drift_score: (item.reflection || {}).drift_score,\n    structure_score: approval.structure_score,\n    _full: item\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ answer: $json.answer, next_actions: $json.next_actions, success: $json.success, error: $json.error, options: $json.options }) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error && $json._skipGovernor ? 400 : 502) }}"
+        }
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Build Governor Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Governor Payload": {
+      "main": [
+        [{ "node": "Call Structured Governor", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call Structured Governor": {
+      "main": [
+        [{ "node": "Format Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
